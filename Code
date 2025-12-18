@@ -1,0 +1,97 @@
+import RPi.GPIO as GPIO
+import time
+import subprocess
+import datetime
+import spidev # SPI library for ADC communication
+
+# Setup SPI for MCP3008
+spi = spidev.SpiDev()
+spi.open(0, 0)
+spi.max_speed_hz = 1350000
+
+# GPIO setup
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+
+# GPIO Pins Configuration
+PIR_PIN = 21 # PIR Motion Sensor
+LED_PIN = 12 # LED
+BUZZER_PIN = 17 # Buzzer
+GAS_THRESHOLD = 300 # Set this to the gas level threshold you want to detect
+
+# Setup GPIO pins
+GPIO.setup(PIR_PIN, GPIO.IN) # PIR sensor as input
+GPIO.setup(LED_PIN, GPIO.OUT) # LED as output
+GPIO.setup(BUZZER_PIN, GPIO.OUT) # Buzzer as output
+
+# Function to read from MCP3008
+def read_adc(channel):
+  adc = spi.xfer2([1, (8 + channel) << 4, 0])
+  data = ((adc[1] & 3) << 8) + adc[2]
+  return data
+
+# Function to send Pushbullet notification
+def send_pushbullet_notification(message):
+  API_KEY = "YOURKEY" # Replace with your actual Pushbullet API key
+  subprocess.run([
+    "curl",
+    "-u", f"{API_KEY}:",
+    "-X", "POST",
+    "https://api.pushbullet.com/v2/pushes",
+    "-d", "type=note",
+    "-d", "title=Alert",
+    "-d", f"body={message}"
+  ])
+
+# Function to record video
+def record_video(duration=10):
+  timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+  video_file = f"/home/madhura/vid/motion_{timestamp}.h264" # Change the path as needed
+  subprocess.run([
+    "libcamera-vid",
+    "-t", str(duration * 1000), # duration in milliseconds
+    "-o", video_file
+  ])
+  print(f"Video recorded: {video_file}")
+
+# Initialize LED and Buzzer to be off
+GPIO.output(LED_PIN, GPIO.LOW)
+GPIO.output(BUZZER_PIN, GPIO.LOW)
+
+# Main loop
+try:
+  print("Motion and Gas Detector is running...")
+  while True:
+    motion_detected = GPIO.input(PIR_PIN)
+    gas_level_analog = read_adc(0)
+
+# Read MQ2 analog value from ADC channel 0
+
+# Motion Detection
+    if motion_detected:
+      GPIO.output(LED_PIN, GPIO.HIGH)
+      GPIO.output(BUZZER_PIN, GPIO.HIGH)
+      print('Motion Detected')
+      send_pushbullet_notification("Alert: Motion Detected.")
+      record_video(duration=10) # Record video for 10 seconds
+      time.sleep(2) # Keep LED and Buzzer on for 2 seconds
+      GPIO.output(LED_PIN, GPIO.LOW)
+      GPIO.output(BUZZER_PIN, GPIO.LOW)
+# Gas Detection with Analog Threshold
+    if gas_level_analog > GAS_THRESHOLD:
+      GPIO.output(LED_PIN, GPIO.HIGH)
+      GPIO.output(BUZZER_PIN, GPIO.HIGH)
+      print(f'Gas Detected! Analog Value: {gas_level_analog}')
+          send_pushbullet_notification(f"Alert: Gas Detected! Level:
+{gas_level_analog}")
+      record_video(duration=10) # Record video for 10 seconds
+      time.sleep(2) # Alert duration
+      GPIO.output(LED_PIN, GPIO.LOW)
+      GPIO.output(BUZZER_PIN, GPIO.LOW)
+# Short delay to prevent excessive CPU usage
+      time.sleep(0.1)
+
+except KeyboardInterrupt:
+  print("\nExiting program...")
+  GPIO.cleanup()
+  spi.close() # Close SPI connection on exit
